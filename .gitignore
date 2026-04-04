@@ -38,3 +38,6 @@ Thumbs.db
 backend/test_*.py
 backend/debug_*.py
 backend/dump_*.py
+
+# Client/Frontend (Khusus WordPress)
+frontend/
