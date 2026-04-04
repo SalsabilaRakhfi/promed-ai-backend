@@ -1,0 +1,40 @@
+# =============================================
+# FILE-FILE RAHASIA — JANGAN PERNAH DI-PUSH!
+# =============================================
+
+# Secrets & Credentials
+backend/.env
+backend/service_account.json
+.env
+service_account.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Testing / debug scripts (tidak perlu di production)
+backend/test_*.py
+backend/debug_*.py
+backend/dump_*.py
