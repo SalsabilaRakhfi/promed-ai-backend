@@ -265,6 +265,10 @@ def _log(session_id: str, user_msg: str, bot_msg: str, latency: float):
             pass
     logs.append(entry)
     LOG_FILE.write_text(json.dumps(logs, ensure_ascii=False, indent=2))
+    # Push to console logs so it's visible in Railway Dashboard
+    print(f"\n[CHAT LOG] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"User ({session_id}): {user_msg}")
+    print(f"Bot: {bot_msg}\n")
 
 
 @app.post("/chat")
