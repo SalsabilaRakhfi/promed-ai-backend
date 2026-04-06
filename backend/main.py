@@ -366,11 +366,8 @@ async def chat_endpoint(req: ChatRequest):
         print(f"[CTX] Expanded query with aliases: {expanded_aliases}")
 
     # Klasifikasi broad/spesifik pakai LLM — satu kali, hasilnya di-cache ke variabel
+    # (Hapus hard override berbasis jumlah kata agar LLM lebih cerdas mendeteksi konteks)
     is_broad = await is_broad_request_llm(message)
-    
-    # Hard override: Jika pesan sangat pendek (macam quick button) dan tidak memiliki nama spesifik (has_peminatan), WAJIB anggap broad
-    if not has_peminatan and len(message.split()) <= 3:
-        is_broad = True
 
     # Mode "menu" saat user tidak spesifik
     if intent == "general":
@@ -417,7 +414,7 @@ async def chat_endpoint(req: ChatRequest):
                         "context_empty": True,
                     }
 
-                messages_for_llm = get_history(session_id)
+                messages_for_llm = get_history(session_id)[-6:]
                 response_text = await chat(messages_for_llm, context)
                 response_text = _truncate_words(response_text, 300)
                 add_message(session_id, "assistant", response_text)
@@ -440,7 +437,7 @@ async def chat_endpoint(req: ChatRequest):
                 ]
                 context = build_context(safe_master_rows, intent=intent)
                 if context.strip():
-                    messages_for_llm = get_history(session_id)
+                    messages_for_llm = get_history(session_id)[-6:]
                     response_text = await chat(messages_for_llm, context)
                     response_text = _truncate_words(response_text, 300)
                     add_message(session_id, "assistant", response_text)
@@ -513,7 +510,7 @@ async def chat_endpoint(req: ChatRequest):
                     "context_empty": True,
                 }
 
-            messages_for_llm = get_history(session_id)
+            messages_for_llm = get_history(session_id)[-6:]
             response_text = await chat(messages_for_llm, context)
             response_text = _truncate_words(response_text, 300)
             add_message(session_id, "assistant", response_text)
@@ -538,7 +535,7 @@ async def chat_endpoint(req: ChatRequest):
             ]
             context = build_context(safe_master_rows, intent=intent)
             if context.strip():
-                messages_for_llm = get_history(session_id)
+                messages_for_llm = get_history(session_id)[-6:]
                 response_text = await chat(messages_for_llm, context)
                 response_text = _truncate_words(response_text, 300)
                 add_message(session_id, "assistant", response_text)
@@ -583,7 +580,13 @@ async def chat_endpoint(req: ChatRequest):
 
     # Magang: broad → tanya spesifik tanpa list panjang
     if intent == "magang" and is_broad and not has_peminatan:
-        response_text = "Mau cari info magang Promates angkatan 2023 di studio mana nih? Langsung sebut aja nama studionya."
+        prior_hist = get_history(session_id)
+        last_bot = prior_hist[-1]['content'] if prior_hist and prior_hist[-1].get('role') == 'assistant' else ""
+        if "Mau cari info magang Promates angkatan 2023 di studio mana nih" in last_bot:
+            is_broad = False
+            has_peminatan = True # Force as specific to break loop
+        else:
+            response_text = "Mau cari info magang Promates angkatan 2023 di studio mana nih? Langsung sebut aja nama studionya."
         add_message(session_id, "assistant", response_text)
         latency = time.time() - t0
         _log(session_id, message, response_text, latency)
@@ -597,7 +600,13 @@ async def chat_endpoint(req: ChatRequest):
 
     # Capstone: broad -> tanya spesifik tanpa list panjang
     if intent == "capstone" and is_broad and not has_peminatan:
-        response_text = "Mau kepoin capstone dari peminatan mana nih? Atau langsung sebut aja nama capstone-nya."
+        prior_hist = get_history(session_id)
+        last_bot = prior_hist[-1]['content'] if prior_hist and prior_hist[-1].get('role') == 'assistant' else ""
+        if "Mau kepoin capstone dari peminatan mana nih" in last_bot:
+            is_broad = False
+            has_peminatan = True # Force as specific to break loop
+        else:
+            response_text = "Mau kepoin capstone dari peminatan mana nih? Atau langsung sebut aja nama capstone-nya."
         add_message(session_id, "assistant", response_text)
         latency = time.time() - t0
         _log(session_id, message, response_text, latency)
@@ -677,7 +686,7 @@ async def chat_endpoint(req: ChatRequest):
             "handled_by_menu": True,
         }
 
-    messages_for_llm = get_history(session_id)
+    messages_for_llm = get_history(session_id)[-6:]
 
     # 6. Call LLM
     try:
