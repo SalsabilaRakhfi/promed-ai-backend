@@ -4,4 +4,4 @@ gspread>=5.10.0
 google-auth>=2.22.0
 httpx>=0.24.0
 python-dotenv>=1.0.0
-pydantic>=2.0.
+pydantic>=2.0
