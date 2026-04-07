@@ -15,11 +15,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from sheets_loader import load_sheet
-from intent_detector import detect_intent, get_sheets_for_intent
+from intent_detector import get_sheets_for_intent
 from retriever import retrieve, filter_by_label, filter_by_peminatan_id
 from context_builder import build_context
 from memory import get_history, add_message
-from openrouter_service import chat, is_broad_request_llm
+from openrouter_service import chat, is_broad_request_llm, detect_intent_llm
 
 app = FastAPI(title="Promed Mentor AI — Cinta")
 
@@ -39,7 +39,7 @@ class ChatRequest(BaseModel):
     session_id: str = ""
 
 
-def _truncate_words(text: str, max_words: int = 300) -> str:
+def _truncate_words(text: str, max_words: int = 400) -> str:
     words = text.split()
     if len(words) <= max_words:
         return text.strip()
@@ -280,19 +280,10 @@ async def chat_endpoint(req: ChatRequest):
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    # 1. Detect intent
-    intent = detect_intent(message)
-    
-    # Context Intent Inheritance: Jika user ditanya magang/capstone lalu cuma jawab nama studio,
-    # detektor generik mungkin membacanya sebagai "peminatan". Kita butuh force intent.
+    # 1. Detect intent — 100% LLM, no keywords
     prior_history = get_history(session_id)
-    if prior_history and prior_history[-1]["role"] == "assistant":
-        last_bot_msg = prior_history[-1]["content"].lower()
-        if intent in ["peminatan", "general", "umum"]:
-            if "info magang" in last_bot_msg or "tempat magang" in last_bot_msg:
-                intent = "magang"
-            elif "kepoin capstone" in last_bot_msg or "seputar capstone" in last_bot_msg:
-                intent = "capstone"
+    intent = await detect_intent_llm(message, prior_history)
+    print(f"[INTENT] LLM detected: {intent} for: '{message}'")
 
     # 2. Load sheets
     sheet_names = get_sheets_for_intent(intent)
@@ -366,8 +357,11 @@ async def chat_endpoint(req: ChatRequest):
         print(f"[CTX] Expanded query with aliases: {expanded_aliases}")
 
     # Klasifikasi broad/spesifik pakai LLM — satu kali, hasilnya di-cache ke variabel
-    # (Hapus hard override berbasis jumlah kata agar LLM lebih cerdas mendeteksi konteks)
     is_broad = await is_broad_request_llm(message)
+    
+    # Hard override: Jika pesan sangat pendek (macam quick button) dan tidak memiliki nama spesifik (has_peminatan), WAJIB anggap broad
+    if not has_peminatan and len(message.split()) <= 3:
+        is_broad = True
 
     # Mode "menu" saat user tidak spesifik
     if intent == "general":
@@ -414,9 +408,9 @@ async def chat_endpoint(req: ChatRequest):
                         "context_empty": True,
                     }
 
-                messages_for_llm = get_history(session_id)[-6:]
-                response_text = await chat(messages_for_llm, context)
-                response_text = _truncate_words(response_text, 300)
+                messages_for_llm = get_history(session_id)
+                response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
+                response_text = _truncate_words(response_text, 400)
                 add_message(session_id, "assistant", response_text)
                 latency = time.time() - t0
                 _log(session_id, message, response_text, latency)
@@ -437,9 +431,9 @@ async def chat_endpoint(req: ChatRequest):
                 ]
                 context = build_context(safe_master_rows, intent=intent)
                 if context.strip():
-                    messages_for_llm = get_history(session_id)[-6:]
-                    response_text = await chat(messages_for_llm, context)
-                    response_text = _truncate_words(response_text, 300)
+                    messages_for_llm = get_history(session_id)
+                    response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
+                    response_text = _truncate_words(response_text, 400)
                     add_message(session_id, "assistant", response_text)
                     latency = time.time() - t0
                     _log(session_id, message, response_text, latency)
@@ -510,9 +504,9 @@ async def chat_endpoint(req: ChatRequest):
                     "context_empty": True,
                 }
 
-            messages_for_llm = get_history(session_id)[-6:]
-            response_text = await chat(messages_for_llm, context)
-            response_text = _truncate_words(response_text, 300)
+            messages_for_llm = get_history(session_id)
+            response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
+            response_text = _truncate_words(response_text, 400)
             add_message(session_id, "assistant", response_text)
             latency = time.time() - t0
             _log(session_id, message, response_text, latency)
@@ -535,9 +529,9 @@ async def chat_endpoint(req: ChatRequest):
             ]
             context = build_context(safe_master_rows, intent=intent)
             if context.strip():
-                messages_for_llm = get_history(session_id)[-6:]
-                response_text = await chat(messages_for_llm, context)
-                response_text = _truncate_words(response_text, 300)
+                messages_for_llm = get_history(session_id)
+                response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
+                response_text = _truncate_words(response_text, 400)
                 add_message(session_id, "assistant", response_text)
                 latency = time.time() - t0
                 _log(session_id, message, response_text, latency)
@@ -549,44 +543,20 @@ async def chat_endpoint(req: ChatRequest):
                     "handled_by_menu": False,
                 }
 
-    # Kurikulum: broad -> tanya mata kuliah yang mana
-    if intent == "kurikulum" and is_broad and not has_peminatan:
-        # Jika user spesifik menyebut tipe semester, bypass fallback agar sistem lanjut retrive (misal "semester 3")
-        if re.search(r'\b(semester|smt|smst|sem|ke-\d+)\b', msg_lower):
-            broad_for_courses = False
-        else:
-            course_names = _extract_unique_values(
-                all_rows,
-                candidate_keys=["nama_mata_kuliah", "course", "matkul", "mata_kuliah", "nama_course"],
-                limit=40,
-            )
-            broad_for_courses = not course_names or not _contains_any_name(msg_lower, course_names)
-            
-        if broad_for_courses:
-            response_text = (
-                "Kamu mau tau soal mata kuliah apa? Atau list matkul semester berapa??\n"
-            )
-            response_text = _truncate_words(response_text, 300)
-            add_message(session_id, "assistant", response_text)
-            latency = time.time() - t0
-            _log(session_id, message, response_text, latency)
-            return {
-                "session_id": session_id,
-                "response": response_text,
-                "intent": intent,
-                "latency_seconds": round(latency, 3),
-                "handled_by_menu": True,
-            }
-
-    # Magang: broad → tanya spesifik tanpa list panjang
-    if intent == "magang" and is_broad and not has_peminatan:
-        prior_hist = get_history(session_id)
-        last_bot = prior_hist[-1]['content'] if prior_hist and prior_hist[-1].get('role') == 'assistant' else ""
-        if "Mau cari info magang Promates angkatan 2023 di studio mana nih" in last_bot:
-            is_broad = False
-            has_peminatan = True # Force as specific to break loop
-        else:
-            response_text = "Mau cari info magang Promates angkatan 2023 di studio mana nih? Langsung sebut aja nama studionya."
+    # 5. Handle Broad Requests (Quick Buttons / General Queries) via LLM
+    # Jika broad dan tidak ada data spesifik (misal baru klik quick button), panggil LLM. 
+    # LLM akan menjawab dengan disclaimer/probing sesuai rules di SYSTEM_PROMPT.
+    if is_broad and not has_peminatan:
+        # Load paminatan_master as context if possible for broad overview
+        try:
+             m_rows = load_sheet("peminatan_master")
+             context = build_context(m_rows, intent=intent)
+        except:
+             context = ""
+             
+        messages_for_llm = get_history(session_id)
+        response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
+        response_text = _truncate_words(response_text, 400)
         add_message(session_id, "assistant", response_text)
         latency = time.time() - t0
         _log(session_id, message, response_text, latency)
@@ -598,27 +568,7 @@ async def chat_endpoint(req: ChatRequest):
             "handled_by_menu": True,
         }
 
-    # Capstone: broad -> tanya spesifik tanpa list panjang
-    if intent == "capstone" and is_broad and not has_peminatan:
-        prior_hist = get_history(session_id)
-        last_bot = prior_hist[-1]['content'] if prior_hist and prior_hist[-1].get('role') == 'assistant' else ""
-        if "Mau kepoin capstone dari peminatan mana nih" in last_bot:
-            is_broad = False
-            has_peminatan = True # Force as specific to break loop
-        else:
-            response_text = "Mau kepoin capstone dari peminatan mana nih? Atau langsung sebut aja nama capstone-nya."
-        add_message(session_id, "assistant", response_text)
-        latency = time.time() - t0
-        _log(session_id, message, response_text, latency)
-        return {
-            "session_id": session_id,
-            "response": response_text,
-            "intent": intent,
-            "latency_seconds": round(latency, 3),
-            "handled_by_menu": True,
-        }
-
-    # 5. Retrieve top rows (LLM mode)
+    # 6. Retrieve top rows (LLM mode - Specific Query)
     # Filter cerdas lintas sheet: Gunakan `peminatan_id` sebagai Foreign Key mutlak
     # Jika user nanya spesifik "magang HCI", kita cari ID HCI ("PM07") dan filter sheet magang yang HANYA memiliki "PM07".
     # Ini melindungi RAG dari kegagalan akibat ketidakcocokan kata (alias gap).
@@ -660,41 +610,20 @@ async def chat_endpoint(req: ChatRequest):
     # 6. Build context
     context = build_context(top_rows, intent=intent)
 
-    # 7. Jika konteks kosong, jangan panggil LLM
+    # 7. Jika konteks kosong, tetap panggil LLM (Jalur 2 / General Knowledge)
+    # Cinta akan menjawab jujur atau memberikan probing sesuai persona.
     if not context.strip():
-        print("[WARN] Konteks kosong — tidak ada baris relevan dari Sheets.")
+        print("[WARN] Konteks kosong — memanggil LLM untuk jawaban fallback persona.")
         
-        # Fallback ramah jika user nanya spesifik tapi datanya kosong karena butuh filter peminatan
-        if intent == "magang":
-                response_text = "Mau cari info magang based on Promates angkatan 2023 studio yang mana nih? Langsung sebut aja nama studionya."
-        elif intent == "kurikulum":
-            response_text = "Kurikulum jurusan apa nih? Biar Cinta bongkar catatan Cinta."
-        elif intent == "capstone":
-            response_text = "Mau kepoin capstone dari peminatan mana nih? Atau langsung sebut aja nama capstone-nya."
-        else:
-            response_text = "Informasi ini belum tersedia di data Promed."
-            
-        add_message(session_id, "assistant", response_text)
-        latency = time.time() - t0
-        _log(session_id, message, response_text, latency)
-        return {
-            "session_id": session_id,
-            "response": response_text,
-            "intent": intent,
-            "latency_seconds": round(latency, 3),
-            "context_empty": True,
-            "handled_by_menu": True,
-        }
+    messages_for_llm = get_history(session_id)
 
-    messages_for_llm = get_history(session_id)[-6:]
-
-    # 6. Call LLM
+    # 8. Call LLM
     try:
-        response_text = await chat(messages_for_llm, context)
+        response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
-    response_text = _truncate_words(response_text, 300)
+    response_text = _truncate_words(response_text, 400)
     add_message(session_id, "assistant", response_text)
 
     latency = time.time() - t0
