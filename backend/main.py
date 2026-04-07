@@ -576,7 +576,14 @@ async def chat_endpoint(req: ChatRequest):
     if inferred_label_global and _label_is_valid(inferred_label_global, master_rows, msg_lower):
         pid = _get_peminatan_id(inferred_label_global, master_rows)
         if pid:
-            if intent == "capstone":
+            # Guard capstone "coming soon": HANYA aktif jika:
+            # 1. Intent memang capstone
+            # 2. User benar-benar menyebut nama peminatan spesifik
+            # 3. Pesan user mengandung kata capstone eksplisit (cegah false positive)
+            CAPSTONE_KEYWORDS = ["capstone", "tugas akhir", "final project", "proyek akhir"]
+            user_asking_capstone = any(kw in msg_lower for kw in CAPSTONE_KEYWORDS)
+
+            if intent == "capstone" and has_peminatan and user_asking_capstone:
                 label_lower = inferred_label_global.lower()
                 if not any(x in label_lower for x in ["fashion & lifestyle", "flui", "hci", "spice", "game", "ox"]):
                     response_text = "Maaf ya Promates, untuk sementara info capstone selain di peminatan Fashion & Lifestyle (FLUI), HCI (S.P.I.C.E. Studio), dan Game Dev (OX-Laboratory) belum tersedia karena Cinta masih prototipe. *Coming soon*! ✨"
