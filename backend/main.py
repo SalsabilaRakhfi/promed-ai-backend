@@ -280,6 +280,10 @@ async def chat_endpoint(req: ChatRequest):
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
+    # Normalization for common slang so Exact Word Retriever doesn't fail
+    # e.g., "gim" -> "game"
+    message = re.sub(r'\bgim\b', 'game', message, flags=re.IGNORECASE)
+    
     # 1. Detect intent — 100% LLM, no keywords
     prior_history = get_history(session_id)
     intent = await detect_intent_llm(message, prior_history)
@@ -602,6 +606,8 @@ async def chat_endpoint(req: ChatRequest):
         else:
             top_rows = retrieve(all_rows, message)
     else:
+        # Jika itu komparasi (is_comparison = True) atau tidak ada label valid, kita jangan di-lock ke 1 ID,
+        # biarkan Retriever mengambil semua row yang bersinggungan dengan isi pesan.
         semester_match = re.search(r'\b(?:semester|smt|smst|sem|ke-)\s*(\d+)\b', msg_lower)
         if intent == "kurikulum" and semester_match:
             target_sem = str(semester_match.group(1))
@@ -647,3 +653,32 @@ async def chat_endpoint(req: ChatRequest):
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "Promed Mentor AI — Cinta"}
+
+
+@app.get("/export-logs")
+def export_logs(start_date: str = None, end_date: str = None):
+    """
+    Endpoint untuk mendownload riwayat percakapan.
+    start_date / end_date format: YYYY-MM-DD (e.g., 2026-04-01)
+    """
+    if not LOG_FILE.exists():
+        return {"logs": []}
+
+    try:
+        logs = json.loads(LOG_FILE.read_text())
+    except Exception:
+        return {"error": "Failed to parse logs file."}
+
+    filtered_logs = logs
+
+    # Filter berdasarkan range tanggal jika diberikan
+    if start_date:
+        filtered_logs = [log for log in filtered_logs if log.get('user_time', '') >= start_date]
+        
+    if end_date:
+        # Tambahkan 23:59:59 untuk mencakup full hari pada end_date
+        end_date_full = f"{end_date}T23:59:59"
+        filtered_logs = [log for log in filtered_logs if log.get('user_time', '') <= end_date_full]
+
+    return {"count": len(filtered_logs), "data": filtered_logs}
+
