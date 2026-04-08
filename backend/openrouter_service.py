@@ -60,17 +60,25 @@ async def chat(messages: List[Dict], context: str, intent: str = None, is_broad:
     if intent or is_broad:
         final_prompt += f"\n\nCONTEXT METADATA:\n- Current Intent: {intent}\n- Is Broad/Start of flow: {is_broad}\n"
 
+    local_messages = [dict(m) for m in messages]
+
     if context:
-        final_prompt += (
-            f"\n\n--- MULAI DATA RELEVAN ---\n{context}\n--- AKHIR DATA RELEVAN ---\n\n"
-            "INSTRUKSI TERAKHIR: Saring data di atas. Tampilkan intinya saja dengan format scannable. JANGAN basa-basi robotik."
+        context_block = (
+            f"\n\n[CONTEXT INJECTED DARI DATABASE]\n"
+            f"Sistem telah menarik data terbaru. HARAP JAWAB MENGACU PADA DATA BERIKUT:\n"
+            f"--- MULAI DATA RELEVAN ---\n{context}\n--- AKHIR DATA RELEVAN ---\n\n"
+            f"INSTRUKSI TERAKHIR: Saring data di atas. Tampilkan intinya saja dengan format scannable. JANGAN MENGARANG INFOMASI LAIN."
         )
+        if local_messages and local_messages[-1]["role"] == "user":
+            local_messages[-1]["content"] += context_block
+        else:
+            final_prompt += context_block
 
     payload = {
         "model": MODEL,
         "temperature": 0.4,
         "max_tokens": 500,
-        "messages": [{"role": "system", "content": final_prompt}] + messages,
+        "messages": [{"role": "system", "content": final_prompt}] + local_messages,
     }
 
     headers = {

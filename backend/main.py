@@ -426,11 +426,7 @@ async def chat_endpoint(req: ChatRequest):
             else:
                 # User bertanya spesifik tapi tidak merujuk 1 peminatan (contoh: "nama studionya apa aja?" atau "studio stream apa aja?")
                 # Filter master_rows agar LLM tidak mencerembet ke deskripsi/fokus (mencegah over-explaining) tapi JANGAN hapus kolom penting seperti studio_stream
-                safe_master_rows = [
-                    {k: v for k, v in row.items() if not any(x in k.lower() for x in ["summary", "deskripsi", "fokus", "description"])}
-                    for row in master_rows
-                ]
-                context = build_context(safe_master_rows, intent=intent)
+                context = build_context(master_rows, intent=intent)
                 if context.strip():
                     messages_for_llm = get_history(session_id)
                     response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
@@ -524,11 +520,7 @@ async def chat_endpoint(req: ChatRequest):
             # Langsung gunakan semua baris master_rows supaya LLM punya data lengkap
             print(f"[INFO] Label '{inferred_label}' tidak valid sebagai peminatan tunggal → gunakan all master rows")
             # Filter master_rows agar LLM tidak mencerembet ke deskripsi/fokus (mencegah over-explaining) tapi JANGAN hapus kolom penting seperti studio_stream
-            safe_master_rows = [
-                {k: v for k, v in row.items() if not any(x in k.lower() for x in ["summary", "deskripsi", "fokus", "description"])}
-                for row in master_rows
-            ]
-            context = build_context(safe_master_rows, intent=intent)
+            context = build_context(master_rows, intent=intent)
             if context.strip():
                 messages_for_llm = get_history(session_id)
                 response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)

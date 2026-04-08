@@ -1,7 +1,7 @@
 from collections import deque
 from typing import List, Dict
 
-MAX_MESSAGES = 4
+MAX_MESSAGES = 20
 
 # In-memory store per session_id
 _stores: Dict[str, deque] = {}
