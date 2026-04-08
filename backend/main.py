@@ -46,25 +46,29 @@ def _truncate_words(text: str, max_words: int = 400) -> str:
     return " ".join(words[:max_words]).strip() + "…"
 
 
+def _get_case_insensitive(row: dict, keys: list) -> str:
+    """Helper to fetch value from dict dynamically regardless of key casing."""
+    lower_keys = [k.lower() for k in keys]
+    for k, v in row.items():
+        if k.lower() in lower_keys:
+            if v is not None:
+                return str(v).strip()
+    return ""
+
+
 def _extract_unique_values(rows, candidate_keys, limit=None):
     seen = set()
     out = []
     for row in rows:
-        for k in candidate_keys:
-            if k not in row:
-                continue
-            v = row.get(k)
-            if v is None:
-                continue
-            s = str(v).strip()
-            if not s:
-                continue
-            if s in seen:
-                continue
-            seen.add(s)
-            out.append(s)
-            if limit is not None and len(out) >= limit:
-                return out
+        v = _get_case_insensitive(row, candidate_keys)
+        if not v:
+            continue
+        if v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+        if limit is not None and len(out) >= limit:
+            return out
     return out
 
 
@@ -143,15 +147,8 @@ def _format_numbered_list(items, max_items=None):
 
 def _extract_first_value(rows, candidate_keys):
     for row in rows:
-        for k in candidate_keys:
-            if k not in row:
-                continue
-            v = row.get(k)
-            if v is None:
-                continue
-            s = str(v).strip()
-            if s:
-                return s
+        v = _get_case_insensitive(row, candidate_keys)
+        if v: return v
     return None
 
 
@@ -206,9 +203,9 @@ def _label_is_valid(label: str, master_rows: list, user_msg_lower: str = "") -> 
     studio_words = []
     
     for row in master_rows:
-        pem = row.get("peminatan", "") or row.get("nama_peminatan", "")
-        studio = row.get("nama_studio", "") or row.get("studio", "")
-        pem_clean = re.sub(r'[^\w\s]', '', str(pem).lower().replace('-', ' '))
+        pem = _get_case_insensitive(row, ["peminatan", "nama_peminatan"])
+        studio = _get_case_insensitive(row, ["nama_studio", "studio"])
+        pem_clean = re.sub(r'[^\w\s]', '', pem.lower().replace('-', ' '))
         if any(w in pem_clean for w in label_words):
             exists_in_db = True
             if studio:
@@ -237,10 +234,10 @@ def _get_peminatan_id(label: str, master_rows: list) -> str | None:
     label_words = [w for w in label_clean.split() if len(w) > 1]
     
     for row in master_rows:
-        pem = row.get("peminatan", "") or row.get("nama_peminatan", "")
-        studio = row.get("nama_studio", "") or row.get("studio", "")
-        pem_clean = re.sub(r'[^\w\s]', '', str(pem).lower().replace('-', ' '))
-        std_clean = re.sub(r'[^\w\s]', '', str(studio).lower().replace('-', ' '))
+        pem = _get_case_insensitive(row, ["peminatan", "nama_peminatan"])
+        studio = _get_case_insensitive(row, ["nama_studio", "studio"])
+        pem_clean = re.sub(r'[^\w\s]', '', pem.lower().replace('-', ' '))
+        std_clean = re.sub(r'[^\w\s]', '', studio.lower().replace('-', ' '))
         
         # Cek apakah ada satupun kata spesifik dari label di peminatan/studio database
         if any(w in pem_clean for w in label_words) or any(w in std_clean for w in label_words):
@@ -347,8 +344,8 @@ async def chat_endpoint(req: ChatRequest):
     expanded_aliases = []
     if "master_rows" in locals():
         for row in master_rows:
-            pem = str(row.get("nama_peminatan", row.get("peminatan", "")))
-            studio = str(row.get("nama_studio", row.get("studio", "")))
+            pem = _get_case_insensitive(row, ["nama_peminatan", "peminatan"])
+            studio = _get_case_insensitive(row, ["nama_studio", "studio"])
             if pem and studio:
                 if _contains_any_name(msg_lower, [pem]) and not _contains_any_name(msg_lower, [studio]):
                     expanded_aliases.append(studio)
