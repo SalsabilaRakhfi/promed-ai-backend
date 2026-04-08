@@ -24,6 +24,44 @@ _client = None
 _cache: Dict[str, dict] = {}  # {sheet_name: {"data": [...], "timestamp": float}}
 
 
+def _parse_service_account_json(raw: str) -> dict:
+    """
+    Parse GOOGLE_SERVICE_ACCOUNT_JSON dari Railway env var secara robust.
+    Railway sering menyimpan private_key dengan \\n yang ter-escape dobel
+    (literal backslash-n, bukan newline asli). Fungsi ini menangani dua kasus:
+    1. JSON valid langsung → parse biasa
+    2. private_key berisi \\n literal → fix dulu, baru parse
+    """
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Coba fix: Railway kadang simpan env var dengan newline asli di dalam string
+        # yang merusak format JSON. Kita escape newline liar di luar konteks JSON string.
+        fixed = raw.replace('\n', '\\n')
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: parsing manual — Railway sering mangle private_key saja
+    # Coba bersihkan hanya field private_key
+    try:
+        import re
+        def fix_private_key(m):
+            key = m.group(1).replace('\n', '\\n').replace('\r', '')
+            return f'"private_key": "{key}"'
+        fixed2 = re.sub(
+            r'"private_key"\s*:\s*"(.*?)"(?=\s*[,}])',
+            fix_private_key,
+            raw,
+            flags=re.DOTALL
+        )
+        return json.loads(fixed2)
+    except Exception as e:
+        raise ValueError(f"Gagal parse GOOGLE_SERVICE_ACCOUNT_JSON: {e}\n"
+                         f"Pastikan value di Railway tidak ada newline liar di luar private_key.") from e
+
+
 def _get_client() -> gspread.Client:
     """
     Buat atau re-authorize gspread client.
@@ -33,7 +71,10 @@ def _get_client() -> gspread.Client:
     global _client
     if _client is None:
         if SERVICE_ACCOUNT_JSON:
-            creds_dict = json.loads(SERVICE_ACCOUNT_JSON)
+            creds_dict = _parse_service_account_json(SERVICE_ACCOUNT_JSON)
+            # Fix private_key: pastikan \n di dalam key adalah newline asli, bukan '\\n'
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         else:
             creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
