@@ -88,7 +88,7 @@ def _contains_any_name(msg_lower: str, names) -> bool:
             return True
         # Cara 2: tiap kata dari nama ada di pesan (partial match untuk studio name)
         name_clean = re.sub(r'[^\w\s]', '', name_lower.replace('-', ' '))
-        name_words = [w for w in name_clean.split() if len(w) > 1]
+        name_words = [w for w in name_clean.split() if w]
         if name_words and all(w in msg_lower for w in name_words[:1]):  # cek kata pertama yang signifikan
             return True
     return False
@@ -210,7 +210,7 @@ def _label_is_valid(label: str, master_rows: list, user_msg_lower: str = "") -> 
             exists_in_db = True
             if studio:
                 std_clean = re.sub(r'[^\w\s]', '', str(studio).lower().replace('-', ' '))
-                studio_words.extend([w for w in std_clean.split() if len(w) > 1])
+                studio_words.extend([w for w in std_clean.split() if w])
             break
             
     if not exists_in_db:
@@ -231,7 +231,7 @@ def _get_peminatan_id(label: str, master_rows: list) -> str | None:
     if not label or not master_rows:
         return None
     label_clean = re.sub(r'[^\w\s]', '', label.lower().replace('-', ' '))
-    label_words = [w for w in label_clean.split() if len(w) > 1]
+    label_words = [w for w in label_clean.split() if w]
     
     for row in master_rows:
         pem = _get_case_insensitive(row, ["peminatan", "nama_peminatan"])
@@ -396,7 +396,12 @@ async def chat_endpoint(req: ChatRequest):
                 top_rows = filter_by_label(top_rows, inferred_label)
                 context = build_context(top_rows, intent=intent)
                 if not context.strip():
-                    response_text = "Maaf, Cinta belum tau informasi ini,"
+                    # Jika gagal, kembalikan ke LLM secara terbuka
+                    pass
+                else:
+                    messages_for_llm = get_history(session_id)
+                    response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
+                    response_text = _truncate_words(response_text, 400)
                     add_message(session_id, "assistant", response_text)
                     latency = time.time() - t0
                     _log(session_id, message, response_text, latency)
@@ -406,23 +411,8 @@ async def chat_endpoint(req: ChatRequest):
                         "intent": "peminatan",
                         "latency_seconds": round(latency, 3),
                         "selected_peminatan": inferred_label,
-                        "context_empty": True,
+                        "handled_by_menu": False,
                     }
-
-                messages_for_llm = get_history(session_id)
-                response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
-                response_text = _truncate_words(response_text, 400)
-                add_message(session_id, "assistant", response_text)
-                latency = time.time() - t0
-                _log(session_id, message, response_text, latency)
-                return {
-                    "session_id": session_id,
-                    "response": response_text,
-                    "intent": "peminatan",
-                    "latency_seconds": round(latency, 3),
-                    "selected_peminatan": inferred_label,
-                    "handled_by_menu": False,
-                }
             else:
                 # User bertanya spesifik tapi tidak merujuk 1 peminatan (contoh: "nama studionya apa aja?" atau "studio stream apa aja?")
                 # Filter master_rows agar LLM tidak mencerembet ke deskripsi/fokus (mencegah over-explaining) tapi JANGAN hapus kolom penting seperti studio_stream
@@ -488,7 +478,12 @@ async def chat_endpoint(req: ChatRequest):
                 top_rows = filter_by_label(top_rows, inferred_label)
             context = build_context(top_rows, intent=intent)
             if not context.strip():
-                response_text = "Maaf, Cinta belum tau informasi ini,"
+                # Jika gagal, fallback ke safety net di bawah
+                pass
+            else:
+                messages_for_llm = get_history(session_id)
+                response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
+                response_text = _truncate_words(response_text, 400)
                 add_message(session_id, "assistant", response_text)
                 latency = time.time() - t0
                 _log(session_id, message, response_text, latency)
@@ -498,23 +493,8 @@ async def chat_endpoint(req: ChatRequest):
                     "intent": "peminatan",
                     "latency_seconds": round(latency, 3),
                     "selected_peminatan": inferred_label,
-                    "context_empty": True,
+                    "handled_by_menu": False,
                 }
-
-            messages_for_llm = get_history(session_id)
-            response_text = await chat(messages_for_llm, context, intent=intent, is_broad=is_broad)
-            response_text = _truncate_words(response_text, 400)
-            add_message(session_id, "assistant", response_text)
-            latency = time.time() - t0
-            _log(session_id, message, response_text, latency)
-            return {
-                "session_id": session_id,
-                "response": response_text,
-                "intent": "peminatan",
-                "latency_seconds": round(latency, 3),
-                "selected_peminatan": inferred_label,
-                "handled_by_menu": False,
-            }
         else:
             # --- Mode semua peminatan: user nanya agregat (misal semua nama studio) ---
             # Langsung gunakan semua baris master_rows supaya LLM punya data lengkap
@@ -612,11 +592,25 @@ async def chat_endpoint(req: ChatRequest):
     # 6. Build context
     context = build_context(top_rows, intent=intent)
 
-    # 7. Jika konteks kosong, tetap panggil LLM (Jalur 2 / General Knowledge)
-    # Cinta akan menjawab jujur atau memberikan probing sesuai persona.
+    # 7. Catch-All Safety Net: Fuzzy Search Global
+    # Jika context kosong (gagal filter/typo terlalu parah), tarik data dari seluruh sheet
     if not context.strip():
-        print("[WARN] Konteks kosong — memanggil LLM untuk jawaban fallback persona.")
+        print("[WARN] Konteks kosong — memicu CATCH-ALL Fuzzy Search!")
+        catch_all_rows = []
+        all_sheets = ["peminatan_master", "curriculum_course_master", "course_description_detail", "capstone_master", "capstone_weekly_detail", "internship_reference_2023"]
+        for sheet in all_sheets:
+            if sheet not in sheet_names:
+                try:
+                    catch_all_rows.extend(load_sheet(sheet))
+                except Exception:
+                    pass
+        catch_all_rows.extend(all_rows)
         
+        fallback_top = retrieve(catch_all_rows, message, top_k=15)
+        context = build_context(fallback_top, intent="fallback")
+        if not context.strip():
+            print("[WARN] CATCH-ALL juga kosong. Fallback ke LLM murni.")
+
     messages_for_llm = get_history(session_id)
 
     # 8. Call LLM
