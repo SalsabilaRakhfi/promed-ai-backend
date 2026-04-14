@@ -31,6 +31,11 @@ app.add_middleware(
 LOG_FILE = Path("../logs/chat_logs.json")
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+# Cache hasil denormalisasi semua sheet (merge master + detail)
+# Ini mencegah re-join 6 sheet setiap request. TTL 10 menit = sama dengan cache sheet individual.
+_DENORAM_CACHE = {"data": None, "ts": 0.0}
+DENORM_TTL = 600  # 10 menit
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -90,7 +95,14 @@ def get_denormalized_sheets():
     Muat Peminatan Master dan gabungkan (join) nama Peminatan & Studio 
     ke semua baris data di sheet lain yang memiliki peminatan_id.
     Ini membuat Fuzzy Search bisa langsung nemu baris Magang/Kurikulum hanya dari sebut nama.
+    
+    Hasil di-cache selama DENORM_TTL detik untuk menghindari re-join setiap request.
     """
+    global _DENORAM_CACHE
+    now = time.time()
+    if _DENORAM_CACHE["data"] is not None and (now - _DENORAM_CACHE["ts"]) < DENORM_TTL:
+        return _DENORAM_CACHE["data"]
+
     master_rows = []
     try:
         master_rows = load_sheet("peminatan_master")
@@ -123,7 +135,12 @@ def get_denormalized_sheets():
         except Exception as e:
             print(f"[WARN] Gagal load {sheet}: {e}")
             
-    return master_rows, all_detail_rows
+    result = (master_rows, all_detail_rows)
+    if master_rows:  # hanya cache kalau berhasil load
+        _DENORAM_CACHE["data"] = result
+        _DENORAM_CACHE["ts"] = now
+        print(f"[CACHE] Denormalized sheets cached: {len(master_rows)} master + {len(all_detail_rows)} detail rows")
+    return result
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
