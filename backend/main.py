@@ -3,8 +3,6 @@ import json
 import time
 import uuid
 import re
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -94,33 +92,21 @@ def _extract_topic_from_history(history: list, names: list) -> str | None:
         return matched[0]
     return None
 
-def _load_sheet_safe(sheet_name: str) -> list:
-    """Load sheet dengan graceful error handling."""
-    try:
-        rows = load_sheet(sheet_name)
-        print(f"[SHEETS] Loaded '{sheet_name}': {len(rows)} rows")
-        return rows
-    except Exception as e:
-        print(f"[WARN] Gagal load {sheet_name}: {e}")
-        return []
-
 def get_denormalized_sheets():
     """
-    Muat Peminatan Master dan gabungkan (join) nama Peminatan & Studio 
-    ke semua baris data di sheet lain yang memiliki peminatan_id.
-    
-    FIX: peminatan_id dicocokkan pakai .strip().lower() di KEDUA sisi untuk
-    mencegah mismatch PM07 vs pm07 vs 'PM07 ' (spasi tersembunyi).
-    FIX: Sheet di-load secara PARALEL untuk memotong cold-start latency ~60%.
-    Hasil di-cache selama DENORM_TTL detik.
+    Muat semua sheet secara SERIAL (aman untuk gspread yang tidak thread-safe).
+    Join nama Peminatan/Studio ke setiap baris detail via peminatan_id.
+    Pisahkan internship_rows dari curriculum_rows agar retrieval dual-pool bisa bekerja.
+
+    ANTI CACHE POISON: hanya simpan ke cache kalau semua sheet kritis berhasil dimuat.
+    Kalau ada yang gagal → pakai cache lama (stale) daripada simpan data kosong.
     """
     global _DENORAM_CACHE
     now = time.time()
     if _DENORAM_CACHE["data"] is not None and (now - _DENORAM_CACHE["ts"]) < DENORM_TTL:
         return _DENORAM_CACHE["data"]
 
-    all_sheet_names = [
-        "peminatan_master",
+    detail_sheet_names = [
         "curriculum_course_master",
         "course_description_detail",
         "capstone_master",
@@ -128,14 +114,15 @@ def get_denormalized_sheets():
         "internship_reference_2023",
     ]
 
-    # Load semua sheet PARALEL (potong latency cold-start ~60%)
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        results = list(pool.map(_load_sheet_safe, all_sheet_names))
+    # Load peminatan_master dulu (wajib ada untuk join)
+    master_rows = []
+    try:
+        master_rows = load_sheet("peminatan_master")
+        print(f"[SHEETS] peminatan_master: {len(master_rows)} rows")
+    except Exception as e:
+        print(f"[WARN] Gagal load peminatan_master: {e}")
 
-    master_rows = results[0]
-    detail_sheet_data = results[1:]
-
-    # Bangun lookup: peminatan_id (strip+lower) -> info
+    # Bangun lookup join
     lookup = {}
     for r in master_rows:
         pid = str(r.get("peminatan_id", "")).strip().lower()
@@ -146,29 +133,46 @@ def get_denormalized_sheets():
                 "_focus": str(r.get("focus") or r.get("nama_fokus", ""))
             }
 
-    # Tag source sheet + pisahkan internship dari curriculum/capstone
+    # Load detail sheets secara SERIAL (aman)
     curriculum_rows = []
     internship_rows = []
-    for i, rows in enumerate(detail_sheet_data):
-        sheet_name = all_sheet_names[i + 1]
-        for r in rows:
-            pid = str(r.get("peminatan_id", "")).strip().lower()
-            if pid and pid in lookup:
-                r["_info_peminatan"] = lookup[pid]["_peminatan"]
-                r["_info_studio"] = lookup[pid]["_studio"]
-                r["_info_fokus"] = lookup[pid]["_focus"]
-            r["_source_sheet"] = sheet_name  # tag sumber sheet
-        if sheet_name == "internship_reference_2023":
-            internship_rows.extend(rows)
-        else:
-            curriculum_rows.extend(rows)
+    for sheet_name in detail_sheet_names:
+        try:
+            rows = load_sheet(sheet_name)
+            print(f"[SHEETS] {sheet_name}: {len(rows)} rows")
+            for r in rows:
+                pid = str(r.get("peminatan_id", "")).strip().lower()
+                if pid and pid in lookup:
+                    r["_info_peminatan"] = lookup[pid]["_peminatan"]
+                    r["_info_studio"] = lookup[pid]["_studio"]
+                    r["_info_fokus"] = lookup[pid]["_focus"]
+                r["_source_sheet"] = sheet_name
+            if sheet_name == "internship_reference_2023":
+                internship_rows.extend(rows)
+            else:
+                curriculum_rows.extend(rows)
+        except Exception as e:
+            print(f"[WARN] Gagal load {sheet_name}: {e}")
 
-    result = (master_rows, curriculum_rows, internship_rows)
-    if master_rows:
+    # ANTI CACHE POISON: simpan ke cache HANYA kalau data kritis ada semua
+    # Kalau internship atau master kosong → jangan overwrite cache lama!
+    all_ok = master_rows and internship_rows and curriculum_rows
+    if all_ok:
+        result = (master_rows, curriculum_rows, internship_rows)
         _DENORAM_CACHE["data"] = result
         _DENORAM_CACHE["ts"] = now
-        print(f"[CACHE] Cached: {len(master_rows)} master, {len(curriculum_rows)} curriculum, {len(internship_rows)} internship rows")
-    return result
+        print(f"[CACHE] Saved: {len(master_rows)} master, {len(curriculum_rows)} curriculum, {len(internship_rows)} internship")
+        return result
+    else:
+        # Ada yang gagal load → pakai cache lama kalau ada
+        if _DENORAM_CACHE["data"] is not None:
+            print(f"[CACHE] Partial load detected (master={len(master_rows)}, intern={len(internship_rows)}). Keeping stale cache.")
+            return _DENORAM_CACHE["data"]
+        else:
+            # Tidak ada cache sama sekali → pakai apa yang ada (graceful degradation)
+            result = (master_rows, curriculum_rows, internship_rows)
+            print(f"[CACHE] No previous cache. Using partial data (master={len(master_rows)}, intern={len(internship_rows)}).")
+            return result
 
 
 @app.post("/chat")
