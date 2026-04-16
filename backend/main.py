@@ -215,7 +215,6 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
-    response_text = _truncate_words(response_text, 400)
     add_message(session_id, "assistant", response_text)
 
     latency = time.time() - t0
