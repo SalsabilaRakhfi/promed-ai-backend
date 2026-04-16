@@ -146,23 +146,28 @@ def get_denormalized_sheets():
                 "_focus": str(r.get("focus") or r.get("nama_fokus", ""))
             }
 
-    # Join: suntikkan nama peminatan & studio ke setiap baris detail
-    all_detail_rows = []
-    for rows in detail_sheet_data:
+    # Tag source sheet + pisahkan internship dari curriculum/capstone
+    curriculum_rows = []
+    internship_rows = []
+    for i, rows in enumerate(detail_sheet_data):
+        sheet_name = all_sheet_names[i + 1]
         for r in rows:
-            # FIX: strip + lower di KEDUA sisi agar PM07, pm07, 'PM07 ' semua cocok
             pid = str(r.get("peminatan_id", "")).strip().lower()
             if pid and pid in lookup:
                 r["_info_peminatan"] = lookup[pid]["_peminatan"]
                 r["_info_studio"] = lookup[pid]["_studio"]
                 r["_info_fokus"] = lookup[pid]["_focus"]
-        all_detail_rows.extend(rows)
+            r["_source_sheet"] = sheet_name  # tag sumber sheet
+        if sheet_name == "internship_reference_2023":
+            internship_rows.extend(rows)
+        else:
+            curriculum_rows.extend(rows)
 
-    result = (master_rows, all_detail_rows)
+    result = (master_rows, curriculum_rows, internship_rows)
     if master_rows:
         _DENORAM_CACHE["data"] = result
         _DENORAM_CACHE["ts"] = now
-        print(f"[CACHE] Denormalized sheets cached: {len(master_rows)} master + {len(all_detail_rows)} detail rows")
+        print(f"[CACHE] Cached: {len(master_rows)} master, {len(curriculum_rows)} curriculum, {len(internship_rows)} internship rows")
     return result
 
 
@@ -177,8 +182,8 @@ async def chat_endpoint(req: ChatRequest):
 
     message = re.sub(r'\bgim\b', 'game', message, flags=re.IGNORECASE)
     
-    # 1. Unified RAG Data Loading (In-Memory Database Join)
-    master_rows, detail_rows = get_denormalized_sheets()
+    # 1. Unified RAG Data Loading
+    master_rows, curriculum_rows, internship_rows = get_denormalized_sheets()
     
     all_names = set()
     for r in master_rows:
@@ -196,9 +201,21 @@ async def chat_endpoint(req: ChatRequest):
         search_query = f"{message} {ctx_topic}"
         print(f"[CTX] Rollover: '{ctx_topic}' -> Query: '{search_query}'")
 
-    # 3. Massive Retrieval (Single Shot)
-    # Cinta langsung mencari jawaban dari LAUTAN data (semua detail kurikulum, magang, capstone digabung!)
-    top_detail_rows = retrieve(detail_rows, search_query, top_k=25)
+    # 3. Dual-Pool Retrieval
+    # Curriculum/capstone rows dan internship rows bersaing di pool TERPISAH
+    # agar internship rows tidak pernah tenggelam oleh banyaknya rows kurikulum.
+    MAGANG_KEYWORDS = {"magang", "penempatan", "internship", "tempat", "stalk", "perusahaan", "partner"}
+    query_words_lower = set(re.sub(r'[^\w\s]', ' ', search_query.lower()).split())
+    is_magang_query = bool(query_words_lower & MAGANG_KEYWORDS)
+
+    top_curriculum = retrieve(curriculum_rows, search_query, top_k=20)
+    
+    # Internship pool: top_k lebih besar saat query tentang magang
+    internship_top_k = 30 if is_magang_query else 5
+    top_internship = retrieve(internship_rows, search_query, top_k=internship_top_k)
+    
+    top_detail_rows = top_curriculum + top_internship
+    print(f"[RETRIEVE] curriculum={len(top_curriculum)}, internship={len(top_internship)}, magang_query={is_magang_query}")
     
     # 4. Context Merging
     context_master = build_context(master_rows)
