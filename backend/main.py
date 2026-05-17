@@ -19,7 +19,7 @@ from context_builder import build_context
 from memory import get_history, add_message
 from openrouter_service import chat
 
-app = FastAPI(title="Promed Mentor AI — Cinta")
+app = FastAPI(title="Promed Mentor AI — Estella")
 
 app.add_middleware(
     CORSMiddleware,
@@ -250,7 +250,7 @@ async def chat_endpoint(req: ChatRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "Promed Mentor AI — Cinta (Unified RAG)"}
+    return {"status": "ok", "service": "Promed Mentor AI — Estella (Unified RAG)"}
 
 @app.get("/export-logs")
 def export_logs(start_date: str = None, end_date: str = None):

@@ -16,7 +16,7 @@ def build_context(rows: List[Dict], intent: str = "umum") -> str:
             if k in SKIP_KEYS or not str(v).strip():
                 continue
                 
-            # Fisik STRIP data deskriptif saat diminta list agar Cinta tidak punya bahasan buat cericit.
+            # Fisik STRIP data deskriptif saat diminta list agar Estella tidak punya bahasan buat cericit.
             if intent in ["capstone", "magang"] and any(b in k.lower() for b in banned_keys_for_lists):
                 continue
                 

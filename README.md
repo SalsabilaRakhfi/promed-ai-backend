@@ -1,4 +1,4 @@
-# Promed Mentor AI — Cinta
+# Promed Mentor AI — Estella
 
 AI chatbot akademik untuk Promates (Media Production, Universitas Indonesia).
 
