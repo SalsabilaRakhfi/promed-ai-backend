@@ -112,6 +112,8 @@ def get_denormalized_sheets():
         "capstone_master",
         "capstone_weekly_detail",
         "internship_reference_2023",
+        "kb_metadata",
+        "qna_skripsi_developer_reference",
     ]
 
     # Load peminatan_master dulu (wajib ada untuk join)
