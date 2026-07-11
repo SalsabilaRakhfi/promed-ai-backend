@@ -14,7 +14,7 @@ promed-mentor/
 │   ├── intent_detector.py      ← Keyword-based intent mapping
 │   ├── retriever.py            ← Hybrid keyword scoring
 │   ├── context_builder.py      ← Row → readable context
-│   ├── memory.py               ← Last-4-message session memory
+│   ├── memory.py               ← Last-40-message session memory
 │   ├── openrouter_service.py   ← OpenRouter API (Claude 3 Haiku)
 │   ├── requirements.txt
 │   └── .env.example
