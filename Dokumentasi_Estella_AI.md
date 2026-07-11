@@ -73,6 +73,6 @@ Perbincangan disimpan ke riwayat `backend/memory.py` saat itu juga dan juga ditu
 2. **Context Rollover:** Menyelesaikan masalah RAG di mana pengguna sering kali memotong subjek. (Tanya "Apa itu HCI", lalu *chat* ke-2 tanya "magangnya di mana?").
 3. **Validasi Cache Setelah Data Dimuat Lengkap:** Cache hanya diperbarui setelah seluruh data yang dibutuhkan dari Google Sheets berhasil dimuat. Mekanisme ini mencegah data yang tidak lengkap menggantikan versi cache yang masih valid.
 4. **Safety Filter - Railway Keys:** Parser service account menangani karakter newline yang tersimpan dalam bentuk escape pada environment variable Railway.
-5. 5. **Eskalasi yang Terkontrol:** Prompt yang melarang chatbot untuk mengarahkan pengguna ke kating/dosen ("Mencegah Hallucination HelpDesk").
+5. **Eskalasi yang Terkontrol:** Prompt yang melarang chatbot untuk mengarahkan pengguna ke kating/dosen ("Mencegah Hallucination HelpDesk").
 
 Demikian rangkuman analisis struktur Promed AI atau yg biasa dipanggil dengan Estella.
