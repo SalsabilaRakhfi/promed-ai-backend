@@ -1,6 +1,6 @@
 # Dokumentasi Promed Mentor AI (Estella)
 
-Catatan ini merupakan rangkuman dari arsitektur, komponen, dan cara kerja dari chatbot **Promed Mentor AI (Estella)** berdasarkan _source code_ yang ada pada folder `Promed_ai2`.
+Catatan ini merupakan rangkuman dari arsitektur, komponen, dan cara kerja dari chatbot **Promed Mentor AI (Estella)** berdasarkan implementasi dalam repository ini.
 
 ---
 
@@ -29,7 +29,7 @@ Promed AI dibangun menggunakan pendekatan **RAG (Retrieval-Augmented Generation)
 
 ## 3. Cara Kerja Sistem RAG (Alur Eksekusi Chat)
 
-Ketika *user* mengirimkan pesan ke `/chat`, berikut adalah rentetan peristiwanya:
+Ketika *user* mengirimkan pesan ke endpoint `/chat`, sistem menjalankan alur berikut:
 
 ### A. Pre-processing & Context Rollover (`main.py`)
 1. Pesan masuk menggunakan `session_id` tertentu.
@@ -53,26 +53,26 @@ Menggunakan **Dual-Pool Retrieval**:
 
 ### D. Pembangunan Konteks Teks (`context_builder.py`)
 Baris-baris data sheet yang dapat nilai relevansi tertinggi (Top-K) lantas diubah menjadi teks sederhana. 
-> *Catatan Menarik:* Tersedia mekanisme filter (*Fisik Strip*) yang sengaja **menghapus kolom-kolom deskriptif panjang** apabila topik yang dibahas adalah "capstone" atau "magang", agar LLM menjawab via urutan sederhana (List) ketimbang *ngelantur*.
+> Tersedia mekanisme filter yang sengaja **menghapus kolom-kolom deskriptif panjang** apabila topik yang dibahas adalah "capstone" atau "magang", agar LLM menjawab via urutan sederhana dan terstruktur (List) ketimbang copy-paste panjang.
 
 ### E. Eksekusi LLM & Persona Injection (`openrouter_service.py`)
 Membangun instruksi kepada Claude dengan menyusun `System Prompt` Estella.
-Persona Estella dikonstruksi secara masif:
+System prompt menetapkan persona, gaya komunikasi Estella, batasan respons, dan aturan penggunaan informasi akademik yang diperoleh dari knowledge base:
 - Gen-Z, kasual, "Estella", "kamu/lo" (Dilarang pakai kata "kami").
-- Memiliki sifat **Teguh Pendirian**: Diinstruksikan keras agar tidak sembarangan bilang "maaf" terpengaruh oleh keraguan *user* jika datanya sesuai di *database* kampus.
-- Konteks kurikulum asli 13 sheet yang didapat dari poin (D) dimasukkan ("inject") langsung di parameter sistem bahwa ini adalah data "Database Kampus".
+- Prompt mengarahkan model agar tidak mengubah jawaban yang sudah didukung oleh knowledge base hanya karena pengguna menyampaikan keraguan. Jawaban hanya perlu direvisi apabila informasi yang tersedia mendukung koreksi tersebut.
+- Konteks kurikulum asli 13 peminatan yang didapat dari poin (D) dimasukkan ("inject") langsung di parameter sistem bahwa ini adalah data "Database Kampus".
 
 ### F. Menyimpan Log Obrolan
 Perbincangan disimpan ke riwayat `backend/memory.py` saat itu juga dan juga ditulis format permanennya ke file `logs/chat_logs.json` untuk keperluaan analisis dan validasi.
 
 ---
 
-## 4. Keunikan & Fitur Pintar
+## 4. Keputusan Desain Utama
 
-1. **Dual-Pool Search (Anti-Tenggelam):** Baris data internship (magang) berisiko sulit ditemukan apabila digabung dengan kurikulum karena datanya sedikit, sehingga sistem memperlakukannya dalam kolam kompetisi pencarian yang diisolasi.
+1. **Dual-Pool Search :** Baris data internship (magang) berisiko sulit ditemukan apabila digabung dengan kurikulum karena jumlah datanya jauh lebih sedikit. Pemisahan ini mencegah informasi magang kalah dalam proses pemeringkatan hasil pencarian.
 2. **Context Rollover:** Menyelesaikan masalah RAG di mana pengguna sering kali memotong subjek. (Tanya "Apa itu HCI", lalu *chat* ke-2 tanya "magangnya di mana?").
-3. **Anti Cache-Poisoning:** Sheets hanya di-cache jika semua *request data* Google berhasil ditarik 100%. Mencegah aplikasi secara tiba-tiba kembali ke mode pasif merespons tidak mendeteksi data kurikulum.
-4. **Safety Filter - Railway Keys:** Sengaja disediakan logika `_parse_service_account_json` super defensif untuk memotong error karakter *backslash-n* (newline liar) spesifik karena anomali platform deploy di Railway.
-5. **Akurasi Persona Konstan:** Prompts yang dengan ketat melarang AI untuk mengarahkan pengguna ke kating/dosen ("Mencegah Hallucination HelpDesk").
+3. **Validasi Cache Setelah Data Dimuat Lengkap:** Cache hanya diperbarui setelah seluruh data yang dibutuhkan dari Google Sheets berhasil dimuat. Mekanisme ini mencegah data yang tidak lengkap menggantikan versi cache yang masih valid.
+4. **Safety Filter - Railway Keys:** Parser service account menangani karakter newline yang tersimpan dalam bentuk escape pada environment variable Railway.
+5. 5. **Eskalasi yang Terkontrol:** Prompt yang melarang chatbot untuk mengarahkan pengguna ke kating/dosen ("Mencegah Hallucination HelpDesk").
 
-Demikian rangkuman analisis struktur Promed AI v2. Jika ada area bot tertentu yang ingin dikembangkan lagi, catatan ini bisa dijadikan dasar logika yang kuat.
+Demikian rangkuman analisis struktur Promed AI atau yg biasa dipanggil dengan Estella.
